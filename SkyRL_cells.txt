@@ -1,0 +1,78 @@
+## Cell 1 [markdown]
+<a href="https://colab.research.google.com/github/hi-wesley/skyrl-demo/blob/main/SkyRL.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+## Cell 2 [code]
+!curl -LsSf https://astral.sh/uv/install.sh | sh
+import os
+os.environ["PATH"] = os.path.expanduser("~/.local/bin") + ":" + os.environ["PATH"]
+!uv --version
+
+## Cell 3 [code]
+!git clone https://github.com/NovaSky-AI/SkyRL.git
+%cd SkyRL/skyrl-train
+
+## Cell 4 [code]
+import os
+os.environ["RAY_RUNTIME_ENV_HOOK"] = "ray._private.runtime_env.uv_runtime_env_hook.hook"
+
+## Cell 5 [code]
+# still in SkyRL/skyrl-train
+!uv run --isolated examples/gsm8k/gsm8k_dataset.py --output_dir /content/data/gsm8k
+
+## Cell 6 [code]
+!uv run --isolated -- python -m ray start --head
+
+## Cell 7 [code]
+%%bash
+cat << 'EOF' > run_gsm8k_colab.sh
+set -x
+
+DATA_DIR="/content/data/gsm8k"
+NUM_GPUS=1
+LOGGER="console"
+INFERENCE_BACKEND="vllm"
+
+uv run --isolated --extra ${INFERENCE_BACKEND} -m skyrl_train.entrypoints.main_base \
+  data.train_data="['${DATA_DIR}/train.parquet']" \
+  data.val_data="['${DATA_DIR}/validation.parquet']" \
+  trainer.algorithm.advantage_estimator="grpo" \
+  trainer.policy.model.path="Qwen/Qwen2.5-0.5B-Instruct" \
+  trainer.strategy="fsdp2" \
+  trainer.placement.colocate_all=true \
+  trainer.placement.policy_num_gpus_per_node=${NUM_GPUS} \
+  trainer.placement.ref_num_gpus_per_node=${NUM_GPUS} \
+  generator.backend="${INFERENCE_BACKEND}" \
+  generator.run_engines_locally=true \
+  generator.weight_sync_backend="nccl" \
+  generator.num_inference_engines=${NUM_GPUS} \
+  generator.inference_engine_tensor_parallel_size=1 \
+  generator.async_engine=true \
+  generator.batched=true \
+  generator.n_samples_per_prompt=2 \
+  generator.gpu_memory_utilization=0.8 \
+  trainer.epochs=1 \
+  trainer.train_batch_size=32 \
+  trainer.policy_mini_batch_size=8 \
+  trainer.micro_forward_batch_size_per_gpu=4 \
+  trainer.micro_train_batch_size_per_gpu=4 \
+  trainer.eval_batch_size=64 \
+  trainer.eval_before_train=false \
+  trainer.eval_interval=50 \
+  trainer.max_prompt_length=512 \
+  generator.sampling_params.max_generate_length=256 \
+  trainer.policy.optimizer_config.lr=1e-6 \
+  trainer.algorithm.use_kl_loss=true \
+  environment.env_class="gsm8k" \
+  trainer.logger="${LOGGER}" \
+  trainer.project_name="gsm8k" \
+  trainer.run_name="gsm8k_colab_test" \
+  trainer.resume_mode=null \
+  trainer.ckpt_path="/content/ckpts/gsm8k_0_5B" \
+  "$@"
+EOF
+
+chmod +x run_gsm8k_colab.sh
+
+## Cell 8 [code]
+!bash run_gsm8k_colab.sh
+
